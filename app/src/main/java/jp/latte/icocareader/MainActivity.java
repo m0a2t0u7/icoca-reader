@@ -4,6 +4,10 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.content.res.ColorStateList;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.net.Uri;
 import android.nfc.NfcAdapter;
 import android.nfc.Tag;
@@ -11,11 +15,13 @@ import android.nfc.tech.NfcF;
 import android.os.Bundle;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ImageView;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -56,13 +62,20 @@ public class MainActivity extends Activity implements NfcAdapter.ReaderCallback 
     private TextView balanceText;
     private TextView lastReadText;
     private TextView driveStatusText;
-    private TextView historyText;
-    private TextView cardHistoryText;
+    private LinearLayout historyRows;
+    private Button cardTab;
+    private Button readingsTab;
+    private Button nfcSettings;
+    private List<String> lastCardHistory = new ArrayList<>();
+    private boolean showReadings;
+    private boolean scannedThisSession;
 
     private boolean dark = false;
     private int colorBg;
     private int colorText;
     private int colorAccent;
+    private int colorSurface;
+    private int colorTint;
     private int colorSub;
 
     private String lastIdmHex = "";
@@ -78,162 +91,278 @@ public class MainActivity extends Activity implements NfcAdapter.ReaderCallback 
     }
 
     private void applyColors() {
-        if (dark) {
-            colorBg = Color.rgb(16, 22, 38);
-            colorText = Color.rgb(235, 240, 250);
-            colorAccent = Color.rgb(120, 160, 255);
-            colorSub = Color.rgb(170, 182, 205);
-        } else {
-            colorBg = Color.WHITE;
-            colorText = Color.rgb(11, 32, 71);
-            colorAccent = Color.rgb(0, 23, 193);
-            colorSub = Color.rgb(90, 104, 128);
-        }
+        colorBg = dark ? 0xFF101C23 : 0xFFF1F6F8;
+        colorText = dark ? 0xFFE6F0F4 : 0xFF102C3A;
+        colorAccent = dark ? 0xFF9DDDE8 : 0xFF075D70;
+        colorSub = dark ? 0xFFBACBD3 : 0xFF49636F;
+        colorSurface = dark ? 0xFF1B2B34 : Color.WHITE;
+        colorTint = dark ? 0xFF25434D : 0xFFDCEEF2;
+
+        getWindow().setStatusBarColor(colorBg);
+        getWindow().setNavigationBarColor(colorBg);
+        getWindow().getDecorView().setSystemUiVisibility(dark ? 0
+                : View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
     }
 
     private TextView makeText(String text, float sizeSp, boolean bold, int color) {
-        TextView tv = new TextView(this);
-        tv.setText(text);
-        tv.setTextSize(sizeSp);
-        tv.setTextColor(color);
-        if (bold) tv.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        tv.setLineSpacing(0, 1.4f);
-        return tv;
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextSize(sizeSp);
+        view.setTextColor(color);
+        if (bold) view.setTypeface(Typeface.DEFAULT_BOLD);
+        view.setLineSpacing(dp(2), 1f);
+        return view;
     }
 
     private Button makeButton(String label) {
-        Button b = new Button(this);
-        b.setText(label);
-        b.setTextSize(17);
-        b.setMinHeight(dp(56));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.setMargins(0, dp(6), 0, dp(6));
-        b.setLayoutParams(lp);
-        return b;
+        Button button = new Button(this);
+        button.setAllCaps(false);
+        button.setText(label);
+        button.setTextSize(14);
+        button.setTypeface(Typeface.DEFAULT_BOLD);
+        button.setMinHeight(dp(48));
+        button.setMinimumHeight(dp(48));
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setPadding(dp(10), dp(5), dp(10), dp(5));
+        styleButton(button, false);
+        return button;
     }
 
-    private int dp(int v) {
-        return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
+    private void styleButton(Button button, boolean selected) {
+        button.setSelected(selected);
+        button.setTextColor(selected ? colorSurface : colorAccent);
+        button.setBackground(new RippleDrawable(
+                ColorStateList.valueOf(dark ? 0x33FFFFFF : 0x22075D70),
+                rounded(selected ? colorAccent : colorTint, 12), null));
+    }
+
+    private GradientDrawable rounded(int color, int radius) {
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(color);
+        background.setCornerRadius(dp(radius));
+        return background;
+    }
+
+    private int dp(int value) {
+        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private LinearLayout column() {
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        return layout;
+    }
+
+    private void add(LinearLayout parent, View view, int top) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.topMargin = dp(top);
+        parent.addView(view, params);
+    }
+
+    private LinearLayout surface(int color, int padding) {
+        LinearLayout layout = column();
+        layout.setPadding(dp(padding), dp(padding), dp(padding), dp(padding));
+        layout.setBackground(rounded(color, 20));
+        return layout;
     }
 
     private void buildUi() {
         applyColors();
-        root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        root = column();
         root.setBackgroundColor(colorBg);
-        root.setPadding(dp(20), dp(16), dp(20), dp(16));
+        root.setPadding(dp(16), dp(12), dp(16), dp(20));
 
-        TextView title = makeText("ICOCAリーダー", 20, true, colorText);
-        root.addView(title);
-
-        statusText = makeText("", 16, false, colorSub);
-        root.addView(statusText);
-
-        balanceText = makeText("残高 未読取", 36, true, colorText);
-        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        blp.setMargins(0, dp(14), 0, 0);
-        balanceText.setLayoutParams(blp);
-        root.addView(balanceText);
-
-        lastReadText = makeText("", 15, false, colorSub);
-        root.addView(lastReadText);
-
-        Button driveButton = makeButton("Drive連携ファイルを設定");
-        driveButton.setOnClickListener(v -> startCreateDocument());
-        root.addView(driveButton);
-
-        driveStatusText = makeText("", 14, false, colorSub);
-        root.addView(driveStatusText);
-
-        Button shareButton = makeButton("記録ファイルを共有する");
-        shareButton.setOnClickListener(v -> shareJsonFile());
-        root.addView(shareButton);
-
-        Button themeButton = makeButton(dark ? "ライトモードに切り替え" : "ダークモードに切り替え");
-        themeButton.setOnClickListener(v -> {
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.ic_transit);
+        header.addView(logo, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        TextView title = makeText("ICOCAリーダー", 21, true, colorText);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        titleParams.leftMargin = dp(10);
+        titleParams.rightMargin = dp(10);
+        title.setAccessibilityHeading(true);
+        header.addView(title, titleParams);
+        Button themeButton = makeButton(dark ? "ライト" : "ダーク");
+        themeButton.setContentDescription(dark ? "ライトモードに切り替え" : "ダークモードに切り替え");
+        themeButton.setOnClickListener(view -> {
             dark = !dark;
             prefs.edit().putBoolean(KEY_DARK, dark).apply();
             buildUi();
             refreshAll();
         });
-        root.addView(themeButton);
+        header.addView(themeButton);
+        add(root, header, 0);
 
-        TextView h1 = makeText("読み取り履歴", 18, true, colorText);
-        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        hlp.setMargins(0, dp(18), 0, dp(4));
-        h1.setLayoutParams(hlp);
-        root.addView(h1);
-        historyText = makeText("", 15, false, colorText);
-        root.addView(historyText);
+        LinearLayout balance = surface(0xFF10465B, 20);
+        add(balance, makeText("最後に読み取った残高", 14, true, 0xFFBFE9F2), 0);
+        balanceText = makeText("未読み取り", 42, true, Color.WHITE);
+        add(balance, balanceText, 2);
+        lastReadText = makeText("", 13, false, 0xFFD1E9F0);
+        add(balance, lastReadText, 2);
+        add(root, balance, 14);
 
-        TextView h2 = makeText("カードの利用履歴・直近10件", 18, true, colorText);
-        h2.setLayoutParams(hlp);
-        root.addView(h2);
-        cardHistoryText = makeText("まだ読み取っていません", 15, false, colorText);
-        root.addView(cardHistoryText);
+        LinearLayout scan = surface(colorTint, 14);
+        statusText = makeText("", 15, true, colorAccent);
+        statusText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        add(scan, statusText, 0);
+        nfcSettings = makeButton("NFC設定を開く");
+        styleButton(nfcSettings, true);
+        nfcSettings.setOnClickListener(view -> openNfcSettings());
+        add(scan, nfcSettings, 8);
+        add(root, scan, 10);
+
+        LinearLayout history = surface(colorSurface, 14);
+        LinearLayout tabs = new LinearLayout(this);
+        cardTab = makeButton("カード利用");
+        readingsTab = makeButton("読み取り記録");
+        LinearLayout.LayoutParams tabParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1);
+        tabs.addView(cardTab, tabParams);
+        LinearLayout.LayoutParams rightTab = new LinearLayout.LayoutParams(tabParams);
+        rightTab.leftMargin = dp(6);
+        tabs.addView(readingsTab, rightTab);
+        cardTab.setContentDescription("カード利用履歴");
+        readingsTab.setContentDescription("読み取り記録");
+        cardTab.setOnClickListener(view -> {
+            showReadings = false;
+            renderHistory();
+        });
+        readingsTab.setOnClickListener(view -> {
+            showReadings = true;
+            renderHistory();
+        });
+        add(history, tabs, 0);
+        historyRows = column();
+        add(history, historyRows, 8);
+        add(root, history, 14);
+
+        LinearLayout storage = surface(colorSurface, 14);
+        TextView storageTitle = makeText("記録の保存・共有", 17, true, colorText);
+        storageTitle.setAccessibilityHeading(true);
+        add(storage, storageTitle, 0);
+        driveStatusText = makeText("", 13, false, colorSub);
+        add(storage, driveStatusText, 4);
+        Button driveButton = makeButton("Driveの保存先を選ぶ");
+        driveButton.setOnClickListener(view -> startCreateDocument());
+        add(storage, driveButton, 10);
+        Button shareButton = makeButton("記録をJSONで共有");
+        shareButton.setOnClickListener(view -> shareJsonFile());
+        add(storage, shareButton, 6);
+        add(root, storage, 14);
 
         TextView version = makeText("バージョン " + BuildConfig.VERSION_NAME, 13, false, colorSub);
         version.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        vlp.setMargins(0, dp(24), 0, 0);
-        version.setLayoutParams(vlp);
-        root.addView(version);
+        add(root, version, 16);
 
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(colorBg);
+        scroll.setFillViewport(true);
         scroll.addView(root);
         setContentView(scroll);
     }
 
-    private void refreshAll() {
+    private void openNfcSettings() {
+        try {
+            startActivity(new Intent(Settings.ACTION_NFC_SETTINGS));
+        } catch (android.content.ActivityNotFoundException unavailable) {
+            startActivity(new Intent(Settings.ACTION_WIRELESS_SETTINGS));
+        }
+    }
+
+    private void refreshNfcStatus() {
+        boolean disabled = nfcAdapter != null && !nfcAdapter.isEnabled();
+        nfcSettings.setVisibility(disabled ? View.VISIBLE : View.GONE);
         if (nfcAdapter == null) {
             statusText.setText("この端末はNFCに対応していません");
-        } else if (!nfcAdapter.isEnabled()) {
-            statusText.setText("NFCがオフです。端末設定でNFCをオンにしてください");
+        } else if (disabled) {
+            statusText.setText("読み取りにはNFCをオンにしてください");
         } else {
-            statusText.setText("カードをスマホの背面にかざしてください");
+            statusText.setText("カードをスマホの背面にかざす");
         }
-        JSONArray readings = loadReadings();
-        if (readings.length() > 0) {
-            JSONObject latest = readings.optJSONObject(0);
-            int bal = latest.optInt("balance", -1);
-            balanceText.setText("残高 " + String.format(Locale.JAPAN, "%,d", bal) + "円");
-            lastReadText.setText("最終読取 " + displayTime(latest.optString("readAt", "")));
-        } else {
-            balanceText.setText("残高 未読取");
-            lastReadText.setText("");
+    }
+
+    private void refreshAll() {
+        refreshNfcStatus();
+        JSONObject latest = loadReadings().optJSONObject(0);
+        balanceText.setText(latest == null ? "未読み取り" : yen(latest.optInt("balance", 0)));
+        lastReadText.setVisibility(latest == null ? View.GONE : View.VISIBLE);
+        if (latest != null) {
+            lastReadText.setText("最終読取  " + displayTime(latest.optString("readAt", "")));
         }
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < readings.length(); i++) {
-            JSONObject r = readings.optJSONObject(i);
-            int bal = r.optInt("balance", 0);
-            String line = displayTime(r.optString("readAt", "")) + "　"
-                    + String.format(Locale.JAPAN, "%,d", bal) + "円";
-            if (i + 1 < readings.length()) {
-                int prev = readings.optJSONObject(i + 1).optInt("balance", bal);
-                int diff = bal - prev;
-                if (diff != 0) {
-                    line += " 前回比 " + (diff > 0 ? "+" : "") + String.format(Locale.JAPAN, "%,d", diff) + "円";
-                }
-            }
-            sb.append(line);
-            if (i + 1 < readings.length()) sb.append("\n");
-        }
-        historyText.setText(readings.length() == 0 ? "まだ記録がありません" : sb.toString());
+        renderHistory();
 
         String uri = prefs.getString(KEY_DRIVE_URI, "");
         driveStatusText.setText(uri == null || uri.isEmpty()
-                ? "Drive連携は未設定です。上のボタンで保存先ファイルを指定してください"
-                : "Drive連携を設定済みです。読み取るたびに同じファイルへ自動で書き直します");
+                ? "Drive自動保存：未設定"
+                : "Drive自動保存：設定済み");
+    }
+
+    private void renderHistory() {
+        styleButton(cardTab, !showReadings);
+        styleButton(readingsTab, showReadings);
+        historyRows.removeAllViews();
+        if (!showReadings) {
+            if (lastCardHistory.isEmpty()) {
+                addEmptyHistory(scannedThisSession
+                        ? "表示できる利用履歴はありません"
+                        : "カードをかざすと直近の利用履歴を表示します");
+            } else {
+                for (String line : lastCardHistory) {
+                    String[] fields = line.split("　", 3);
+                    addHistoryRow(fields[1] + "　" + fields[0], fields[2]);
+                }
+            }
+            return;
+        }
+
+        JSONArray readings = loadReadings();
+        for (int i = 0; i < readings.length(); i++) {
+            JSONObject record = readings.optJSONObject(i);
+            if (record == null) continue;
+            int balance = record.optInt("balance", 0);
+            JSONObject previous = readings.optJSONObject(i + 1);
+            int difference = previous == null ? 0 : balance - previous.optInt("balance", balance);
+            String detail = yen(balance);
+            if (difference != 0) {
+                detail += "  （前回比 " + (difference > 0 ? "+" : "") + yen(difference) + "）";
+            }
+            addHistoryRow(displayTime(record.optString("readAt", "")), detail);
+        }
+        if (historyRows.getChildCount() == 0) addEmptyHistory("まだ読み取り記録がありません");
+    }
+
+    private void addEmptyHistory(String message) {
+        TextView empty = makeText(message, 14, false, colorSub);
+        empty.setPadding(dp(2), dp(8), dp(2), dp(8));
+        add(historyRows, empty, 0);
+    }
+
+    private void addHistoryRow(String label, String amount) {
+        if (historyRows.getChildCount() > 0) {
+            View divider = new View(this);
+            divider.setBackgroundColor(colorTint);
+            historyRows.addView(divider, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+        }
+        LinearLayout row = column();
+        row.setPadding(dp(2), dp(8), dp(2), dp(8));
+        add(row, makeText(label, 13, false, colorSub), 0);
+        add(row, makeText(amount, 16, true, colorText), 1);
+        add(historyRows, row, 0);
+    }
+
+    private String yen(int amount) {
+        return String.format(Locale.JAPAN, "%,d円", amount);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        refreshNfcStatus();
         if (nfcAdapter != null) {
             Bundle opts = new Bundle();
             opts.putInt(NfcAdapter.EXTRA_READER_PRESENCE_CHECK_DELAY, 250);
@@ -317,9 +446,8 @@ public class MainActivity extends Activity implements NfcAdapter.ReaderCallback 
             saveReadings(next);
             writeDriveFileIfSet();
         }
-        if (!cardHist.isEmpty()) {
-            cardHistoryText.setText(String.join("\n", cardHist));
-        }
+        lastCardHistory = cardHist;
+        scannedThisSession = true;
         refreshAll();
         Toast.makeText(this, duplicate ? "同じ残高のため記録は追加しませんでした"
                 : "記録しました", Toast.LENGTH_SHORT).show();

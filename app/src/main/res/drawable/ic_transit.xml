@@ -1,0 +1,9 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape>
+            <solid android:color="#10465B" />
+            <corners android:radius="12dp" />
+        </shape>
+    </item>
+    <item android:drawable="@drawable/ic_transit_glyph" />
+</layer-list>
